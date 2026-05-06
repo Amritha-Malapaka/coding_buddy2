@@ -142,7 +142,6 @@ export default function ProblemPage() {
   const [aiMessages, setAiMessages] = useState<{role: 'user' | 'ai', content: string}[]>([
     { role: 'ai', content: 'Hi! I\'m your AI mentor. I can help you understand the problem, provide hints, or review your code. What would you like help with?' }
   ])
-  const [aiInput, setAiInput] = useState('')
   const [aiLoading, setAiLoading] = useState(false)
   const [runResults, setRunResults] = useState<RunCodeResult[]>([])
   const [runSummary, setRunSummary] = useState<{ passed: number; total: number } | null>(null)
@@ -206,26 +205,29 @@ export default function ProblemPage() {
     'javascript': 63
   }
 
-  const handleAiHelp = async () => {
-    if (!aiInput.trim()) return
+  const handleTutorRequest = async (requestType: TutorRequestType) => {
+    const requestLabels: Record<TutorRequestType, string> = {
+      why_failing: 'Why is it failing?',
+      what_to_do: 'What should I do?',
+      explain_concept: 'Explain the concept'
+    }
 
-    const userMessage = aiInput.trim()
+    const userMessage = requestLabels[requestType]
     setAiMessages(prev => [...prev, { role: 'user', content: userMessage }])
-    setAiInput('')
     setAiLoading(true)
 
     try {
-      const lowerMessage = userMessage.toLowerCase()
-      let requestType: TutorRequestType = 'what_to_do'
-      if (lowerMessage.includes('why') || lowerMessage.includes('fail') || lowerMessage.includes('wrong')) {
-        requestType = 'why_failing'
-      } else if (lowerMessage.includes('concept') || lowerMessage.includes('what is') || lowerMessage.includes('explain')) {
-        requestType = 'explain_concept'
-      }
-
       const failedTestCase = runResults.find(test => !test.passed) || null
-      const historyPayload = aiMessages.map(msg => ({
-        role: msg.role === 'ai' ? 'assistant' : 'user',
+      const historyPayload = [
+        ...aiMessages.map(msg => ({
+          role: msg.role === 'ai' ? 'assistant' : 'user',
+          content: msg.content
+        })),
+        { role: 'user', content: userMessage }
+      ]
+
+      const normalizedHistoryPayload = historyPayload.map(msg => ({
+        role: msg.role === 'assistant' ? 'assistant' : 'user',
         content: msg.content
       }))
 
@@ -235,12 +237,19 @@ export default function ProblemPage() {
           'Content-Type': 'application/json'
         },
         body: JSON.stringify({
+          problemTitle: problem?.title,
+          problemDescription: problem?.description,
+          userCode: code,
+          language,
+          testResults: runResults,
+          messageHistory: normalizedHistoryPayload,
+          requestType,
+
+          // Kept for backend compatibility with existing endpoint contract
           problemId: problem?.id,
           code,
-          requestType,
-          messageHistory: historyPayload,
           failedTestCase,
-          userMessage
+          userMessage: requestLabels[requestType]
         })
       })
 
@@ -721,35 +730,39 @@ export default function ProblemPage() {
                       <span className="w-1.5 h-1.5 bg-[#8b949e] rounded-full animate-bounce" style={{ animationDelay: '0.1s' }}></span>
                       <span className="w-1.5 h-1.5 bg-[#8b949e] rounded-full animate-bounce" style={{ animationDelay: '0.2s' }}></span>
                     </div>
-                    <span className="text-[#8b949e] text-xs">Thinking...</span>
+                    <span className="text-[#8b949e] text-xs">Tutor is thinking...</span>
                   </div>
                 </div>
               )}
             </div>
 
-            {/* Input */}
+            {/* Tutor Actions */}
             <div className="border-t border-[#30363d] p-3">
-              <div className="flex gap-2">
-                <input
-                  type="text"
-                  value={aiInput}
-                  onChange={(e) => setAiInput(e.target.value)}
-                  onKeyDown={(e) => e.key === 'Enter' && handleAiHelp()}
-                  placeholder="Ask for help..."
-                  className="flex-1 bg-[#161b22] text-white text-sm px-3 py-2 rounded border border-[#30363d] focus:border-[#8b5cf6] focus:outline-none"
-                />
+              <div className="grid gap-2">
                 <button
-                  onClick={handleAiHelp}
-                  disabled={aiLoading || !aiInput.trim()}
-                  className="px-3 py-2 bg-[#8b5cf6] text-white rounded hover:bg-[#7c3aed] disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                  onClick={() => handleTutorRequest('why_failing')}
+                  disabled={aiLoading || runResults.length === 0}
+                  className="w-full text-left px-3 py-2 bg-[#161b22] text-[#c9d1d9] text-sm rounded border border-[#30363d] hover:border-[#8b5cf6] disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                 >
-                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <path d="m22 2-7 20-4-9-9-4 20-7z"/>
-                  </svg>
+                  Why is it failing?
+                </button>
+                <button
+                  onClick={() => handleTutorRequest('what_to_do')}
+                  disabled={aiLoading || runResults.length === 0}
+                  className="w-full text-left px-3 py-2 bg-[#161b22] text-[#c9d1d9] text-sm rounded border border-[#30363d] hover:border-[#8b5cf6] disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                >
+                  What should I do?
+                </button>
+                <button
+                  onClick={() => handleTutorRequest('explain_concept')}
+                  disabled={aiLoading || runResults.length === 0}
+                  className="w-full text-left px-3 py-2 bg-[#161b22] text-[#c9d1d9] text-sm rounded border border-[#30363d] hover:border-[#8b5cf6] disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                >
+                  Explain the concept
                 </button>
               </div>
               <p className="mt-2 text-[#6e7681] text-[11px]">
-                Tips: Ask for hints, explanations, or code review
+                Run your code first to enable tutor actions.
               </p>
             </div>
           </div>
