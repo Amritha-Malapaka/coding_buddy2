@@ -4,6 +4,8 @@ const express = require('express');
 const cors = require('cors');
 const { v4: uuidv4 } = require('uuid');
 const { GoogleGenerativeAI } = require("@google/generative-ai");
+const bcrypt = require('bcryptjs');
+const jwt = require('jsonwebtoken');
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
 const app = express();
@@ -16,11 +18,19 @@ app.use(cors({
 app.use(express.json());
 
 // Mock database
-const users = [
+const demoUsers = [
   { id: '1', username: 'admin', password: 'admin' },
   { id: '2', username: 'user1', password: 'pass1' },
   { id: '3', username: 'user2', password: 'pass2' }
 ];
+
+const users = demoUsers.map((user) => {
+  const isBcryptHash = typeof user.password === 'string' && user.password.startsWith('$2');
+  return {
+    ...user,
+    password: isBcryptHash ? user.password : bcrypt.hashSync(user.password, 10)
+  };
+});
 
 const problems = [
   {
@@ -98,7 +108,17 @@ const problems = [
   }
 ];
 
-let currentUser = null;
+const JWT_SECRET = process.env.JWT_SECRET || '';
+
+const getTokenFromCookieHeader = (cookieHeader) => {
+  if (!cookieHeader) return null;
+
+  const cookies = cookieHeader.split(';').map((part) => part.trim());
+  const tokenCookie = cookies.find((cookie) => cookie.startsWith('token='));
+  if (!tokenCookie) return null;
+
+  return decodeURIComponent(tokenCookie.substring('token='.length));
+};
 
 // Routes
 app.get('/api/problems', (req, res) => {
@@ -120,26 +140,56 @@ app.get('/api/problems/:id', (req, res) => {
 
 app.post('/api/login', (req, res) => {
   const { username, password } = req.body;
-  const user = users.find(u => u.username === username && u.password === password);
-  
-  if (!user) {
+  const user = users.find(u => u.username === username);
+
+  if (!JWT_SECRET) {
+    return res.status(500).json({ error: 'JWT_SECRET is not configured' });
+  }
+
+  if (!user || !bcrypt.compareSync(password || '', user.password)) {
     return res.status(401).json({ error: 'Invalid credentials' });
   }
-  
-  currentUser = { id: user.id, username: user.username };
-  res.json(currentUser);
+
+  const token = jwt.sign(
+    { userId: user.id, username: user.username },
+    JWT_SECRET,
+    { expiresIn: '7d' }
+  );
+
+  res.cookie('token', token, {
+    httpOnly: true,
+    sameSite: 'strict'
+  });
+
+  const safeUser = { id: user.id, username: user.username };
+  res.json(safeUser);
 });
 
 app.post('/api/logout', (req, res) => {
-  currentUser = null;
+  res.clearCookie('token', {
+    httpOnly: true,
+    sameSite: 'strict'
+  });
   res.json({ message: 'Logged out successfully' });
 });
 
 app.get('/api/me', (req, res) => {
-  if (!currentUser) {
+  const token = getTokenFromCookieHeader(req.headers.cookie);
+
+  if (!JWT_SECRET) {
+    return res.status(500).json({ error: 'JWT_SECRET is not configured' });
+  }
+
+  if (!token) {
     return res.status(401).json({ error: 'Not authenticated' });
   }
-  res.json(currentUser);
+
+  try {
+    const decoded = jwt.verify(token, JWT_SECRET);
+    return res.json({ id: decoded.userId, username: decoded.username });
+  } catch (error) {
+    return res.status(401).json({ error: 'Not authenticated' });
+  }
 });
 
 const PISTON_API_URL = 'https://emkc.org/api/v2/piston/execute';
