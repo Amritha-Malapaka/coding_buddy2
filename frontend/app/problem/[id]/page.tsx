@@ -20,6 +20,13 @@ interface Problem {
   constraints: string[]
 }
 
+interface RunCodeResult {
+  input: string
+  expected: string
+  actual: string
+  passed: boolean
+}
+
 type Language = 'python' | 'c' | 'cpp' | 'java' | 'javascript'
 type TabType = 'code' | 'output'
 
@@ -137,6 +144,9 @@ export default function ProblemPage() {
   ])
   const [aiInput, setAiInput] = useState('')
   const [aiLoading, setAiLoading] = useState(false)
+  const [runResults, setRunResults] = useState<RunCodeResult[]>([])
+  const [runSummary, setRunSummary] = useState<{ passed: number; total: number } | null>(null)
+  const [runError, setRunError] = useState<string | null>(null)
 
   // Keyboard shortcut for exiting fullscreen
   useEffect(() => {
@@ -234,58 +244,40 @@ export default function ProblemPage() {
     }
   }
 
-  const handleRun = async () => {
+  const handleRunCode = async () => {
+    if (!problem) return
+
     setIsRunning(true)
-    setActiveTab('output')
-    setOutput('Running...\n\n')
+    setRunResults([])
+    setRunSummary(null)
+    setRunError(null)
 
     try {
-      const response = await fetch('http://localhost:5000/run-code', {
+      const response = await fetch('http://localhost:5000/api/run-code', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
         },
         body: JSON.stringify({
-          source_code: code,
-          language_id: languageIds[language],
-          stdin: useCustomInput ? testInput : ''
+          code,
+          language,
+          problemId: problem.id
         })
       })
 
       if (!response.ok) {
-        throw new Error('Failed to execute code')
+        const errorData = await response.json().catch(() => ({}))
+        throw new Error(errorData.error || 'Failed to execute code')
       }
 
       const result = await response.json()
-
-      // Format output
-      let outputText = ''
-
-      if (result.stdout) {
-        outputText += `Output:\n${result.stdout}\n\n`
+      setRunResults(result.results || [])
+      setRunSummary({ passed: result.passed || 0, total: result.total || 0 })
+      if (result.error) {
+        setRunError(result.error)
       }
-
-      if (result.stderr) {
-        outputText += `Errors:\n${result.stderr}\n\n`
-      }
-
-      if (result.compile_output && result.compile_output !== result.stdout) {
-        outputText += `Compiler Output:\n${result.compile_output}\n\n`
-      }
-
-      outputText += `Status: ${result.status?.description || 'Unknown'}\n`
-
-      if (result.time) {
-        outputText += `Time: ${result.time}s\n`
-      }
-
-      if (result.memory) {
-        outputText += `Memory: ${result.memory} KB\n`
-      }
-
-      setOutput(outputText.trim())
     } catch (error) {
-      setOutput(`Error: ${error instanceof Error ? error.message : 'Failed to run code'}\n\nPlease make sure the backend server is running on http://localhost:5000`)
+      setRunError(error instanceof Error ? error.message : 'Failed to run code')
     } finally {
       setIsRunning(false)
     }
@@ -623,17 +615,17 @@ export default function ProblemPage() {
 
                 <div className="flex gap-2">
                   <button
-                    onClick={handleRun}
+                    onClick={handleRunCode}
                     disabled={isRunning}
                     className="px-5 py-1.5 text-sm text-white bg-[#1f6feb] rounded hover:bg-[#388bfd] disabled:opacity-50 disabled:cursor-not-allowed font-medium transition-colors flex items-center gap-2"
                   >
-                    {isRunning && activeTab === 'output' ? (
+                    {isRunning ? (
                       <svg className="animate-spin h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
                         <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
                         <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
                       </svg>
                     ) : null}
-                    {isRunning ? 'Running...' : 'Run'}
+                    {isRunning ? 'Running...' : 'Run Code'}
                   </button>
                   <button
                     onClick={handleSubmit}
@@ -644,6 +636,48 @@ export default function ProblemPage() {
                   </button>
                 </div>
               </div>
+
+              {(runError || runSummary || runResults.length > 0) && (
+                <div className="mt-3 space-y-3">
+                  {runError && (
+                    <div className="bg-red-500/10 border border-red-500/30 text-red-300 rounded-md p-3 text-sm whitespace-pre-wrap">
+                      {runError}
+                    </div>
+                  )}
+
+                  {runSummary && (
+                    <div className="text-sm text-[#c9d1d9]">
+                      Passed {runSummary.passed} / {runSummary.total} test cases
+                    </div>
+                  )}
+
+                  {runResults.length > 0 && (
+                    <div className="space-y-2">
+                      {runResults.map((result, index) => (
+                        <div
+                          key={`${index}-${result.input}`}
+                          className="border border-[#30363d] rounded-md p-3 bg-[#0d1117]"
+                        >
+                          <div className="flex items-center gap-2 mb-2">
+                            <span className={result.passed ? 'text-green-400' : 'text-red-400'}>
+                              {result.passed ? '✅' : '❌'}
+                            </span>
+                            <span className="text-sm font-medium text-white">Test Case {index + 1}</span>
+                          </div>
+                          <div className="space-y-1 text-xs">
+                            <p className="text-[#8b949e]">Input:</p>
+                            <pre className="text-[#c9d1d9] font-mono whitespace-pre-wrap">{result.input || '(empty)'}</pre>
+                            <p className="text-[#8b949e]">Expected Output:</p>
+                            <pre className="text-[#c9d1d9] font-mono whitespace-pre-wrap">{result.expected || '(empty)'}</pre>
+                            <p className="text-[#8b949e]">Actual Output:</p>
+                            <pre className="text-[#c9d1d9] font-mono whitespace-pre-wrap">{result.actual || '(empty)'}</pre>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           </div>
         </div>

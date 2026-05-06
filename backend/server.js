@@ -140,6 +140,106 @@ app.get('/api/me', (req, res) => {
   res.json(currentUser);
 });
 
+const PISTON_API_URL = 'https://emkc.org/api/v2/piston/execute';
+const PISTON_LANGUAGES = {
+  python: { language: 'python', version: '3.10.0' },
+  javascript: { language: 'javascript', version: '18.15.0' },
+  java: { language: 'java', version: '15.0.2' },
+  cpp: { language: 'cpp', version: '10.2.0' }
+};
+
+app.post('/api/run-code', async (req, res) => {
+  try {
+    const { code, language, problemId } = req.body;
+
+    if (!code || !language || !problemId) {
+      return res.status(400).json({
+        error: 'code, language, and problemId are required'
+      });
+    }
+
+    const runtime = PISTON_LANGUAGES[language];
+    if (!runtime) {
+      return res.status(400).json({
+        error: 'Unsupported language. Supported: python, javascript, java, cpp'
+      });
+    }
+
+    const problem = problems.find(p => p.id === problemId);
+    if (!problem) {
+      return res.status(404).json({ error: 'Problem not found' });
+    }
+
+    const testCases = problem.testCases || [];
+    if (testCases.length === 0) {
+      return res.status(400).json({ error: 'No test cases available for this problem' });
+    }
+
+    const results = [];
+    let passed = 0;
+    let executionError = null;
+
+    for (const testCase of testCases) {
+      const pistonResponse = await fetch(PISTON_API_URL, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          language: runtime.language,
+          version: runtime.version,
+          files: [{ content: code }],
+          stdin: testCase.input || ''
+        })
+      });
+
+      if (!pistonResponse.ok) {
+        const errorText = await pistonResponse.text();
+        return res.status(502).json({
+          error: `Piston API request failed: ${errorText}`
+        });
+      }
+
+      const executionResult = await pistonResponse.json();
+      const compileError = executionResult.compile?.stderr || executionResult.compile?.output || '';
+      const runtimeError = executionResult.run?.stderr || '';
+      const actualOutput = (executionResult.run?.stdout || '').trim();
+      const expectedOutput = (testCase.expectedOutput || '').trim();
+      const testPassed = !compileError && !runtimeError && actualOutput === expectedOutput;
+
+      if (testPassed) {
+        passed += 1;
+      }
+
+      if (!executionError && (compileError || runtimeError)) {
+        executionError = compileError || runtimeError;
+      }
+
+      results.push({
+        input: testCase.input || '',
+        expected: testCase.expectedOutput || '',
+        actual: actualOutput,
+        passed: testPassed
+      });
+    }
+
+    return res.json({
+      passed,
+      total: testCases.length,
+      results,
+      error: executionError
+    });
+  } catch (error) {
+    console.error('Piston run-code error:', error);
+    return res.status(500).json({
+      passed: 0,
+      total: 0,
+      results: [],
+      error: error.message || 'Internal server error'
+    });
+  }
+});
+
 // Judge0 API Configuration
 const JUDGE0_API_URL = 'https://ce.judge0.com';
 
