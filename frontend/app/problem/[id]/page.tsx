@@ -27,6 +27,7 @@ interface RunCodeResult {
   passed: boolean
 }
 
+type TutorRequestType = 'why_failing' | 'what_to_do' | 'explain_concept'
 type Language = 'python' | 'c' | 'cpp' | 'java' | 'javascript'
 type TabType = 'code' | 'output'
 
@@ -214,25 +215,42 @@ export default function ProblemPage() {
     setAiLoading(true)
 
     try {
-      const response = await fetch('http://localhost:5000/ai-help', {
+      const lowerMessage = userMessage.toLowerCase()
+      let requestType: TutorRequestType = 'what_to_do'
+      if (lowerMessage.includes('why') || lowerMessage.includes('fail') || lowerMessage.includes('wrong')) {
+        requestType = 'why_failing'
+      } else if (lowerMessage.includes('concept') || lowerMessage.includes('what is') || lowerMessage.includes('explain')) {
+        requestType = 'explain_concept'
+      }
+
+      const failedTestCase = runResults.find(test => !test.passed) || null
+      const historyPayload = aiMessages.map(msg => ({
+        role: msg.role === 'ai' ? 'assistant' : 'user',
+        content: msg.content
+      }))
+
+      const response = await fetch(`${API_URL}/api/tutor`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
         },
         body: JSON.stringify({
-          code: code,
-          problem_description: problem?.description,
-          user_question: userMessage
+          problemId: problem?.id,
+          code,
+          requestType,
+          messageHistory: historyPayload,
+          failedTestCase,
+          userMessage
         })
       })
 
       if (!response.ok) {
         const errorData = await response.json();
-        throw new Error(errorData.message || 'Failed to get AI response');
+        throw new Error(errorData.reply || 'Failed to get AI response');
       }
 
       const result = await response.json()
-      setAiMessages(prev => [...prev, { role: 'ai', content: result.response }])
+      setAiMessages(prev => [...prev, { role: 'ai', content: result.reply }])
     } catch (error) {
       setAiMessages(prev => [...prev, { 
         role: 'ai', 
