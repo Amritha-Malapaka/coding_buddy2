@@ -6,6 +6,8 @@ const { v4: uuidv4 } = require('uuid');
 const { GoogleGenerativeAI } = require("@google/generative-ai");
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
+const fs = require('fs');
+const path = require('path');
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
 const app = express();
@@ -16,6 +18,17 @@ app.use(cors({
   credentials: true
 }));
 app.use(express.json());
+
+// Ensure data directory exists
+const DATA_DIR = path.join(__dirname, 'data');
+if (!fs.existsSync(DATA_DIR)) {
+  fs.mkdirSync(DATA_DIR, { recursive: true });
+}
+
+const PROGRESS_FILE = path.join(DATA_DIR, 'progress.json');
+if (!fs.existsSync(PROGRESS_FILE)) {
+  fs.writeFileSync(PROGRESS_FILE, JSON.stringify({}));
+}
 
 // Mock database
 const demoUsers = [
@@ -192,6 +205,112 @@ app.get('/api/me', (req, res) => {
   }
 });
 
+// --- Progress Tracking Endpoints ---
+
+app.post('/api/progress/solve', (req, res) => {
+  const { userId, problemId, language, timeTaken } = req.body;
+
+  if (!userId || !problemId || !language) {
+    return res.status(400).json({ error: 'userId, problemId, and language are required' });
+  }
+
+  let progressData = {};
+  try {
+    const fileContent = fs.readFileSync(PROGRESS_FILE, 'utf8');
+    progressData = JSON.parse(fileContent);
+  } catch (error) {
+    console.error('Error reading progress file:', error);
+  }
+
+  if (!progressData[userId]) {
+    progressData[userId] = {
+      solves: []
+    };
+  }
+
+  const userProgress = progressData[userId];
+
+  // Check if already solved
+  const alreadySolved = userProgress.solves.some(solve => solve.problemId === problemId);
+
+  if (!alreadySolved) {
+    userProgress.solves.push({
+      problemId,
+      language,
+      timeTaken: timeTaken || 0,
+      timestamp: new Date().toISOString()
+    });
+
+    try {
+      fs.writeFileSync(PROGRESS_FILE, JSON.stringify(progressData, null, 2));
+    } catch (error) {
+      console.error('Error writing progress file:', error);
+      return res.status(500).json({ error: 'Failed to save progress' });
+    }
+  }
+
+  res.json({ success: true, message: 'Progress updated', alreadySolved });
+});
+
+app.get('/api/progress/:userId', (req, res) => {
+  const { userId } = req.params;
+
+  let progressData = {};
+  try {
+    if (fs.existsSync(PROGRESS_FILE)) {
+      const fileContent = fs.readFileSync(PROGRESS_FILE, 'utf8');
+      progressData = JSON.parse(fileContent);
+    }
+  } catch (error) {
+    console.error('Error reading progress file:', error);
+    return res.status(500).json({ error: 'Failed to read progress' });
+  }
+
+  const userProgress = progressData[userId] || { solves: [] };
+  
+  const solvedProblems = userProgress.solves.map(s => s.problemId);
+  const totalSolved = solvedProblems.length;
+
+  // Calculate streak: consecutive days with at least one solve up to today or yesterday
+  let streak = 0;
+  if (userProgress.solves.length > 0) {
+    // Sort solves by date descending
+    const sortedSolves = [...userProgress.solves].sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+    
+    const uniqueDates = Array.from(new Set(sortedSolves.map(s => new Date(s.timestamp).toISOString().split('T')[0])));
+    
+    const todayStr = new Date().toISOString().split('T')[0];
+    const yesterday = new Date();
+    yesterday.setDate(yesterday.getDate() - 1);
+    const yesterdayStr = yesterday.toISOString().split('T')[0];
+
+    let currentDateStr = todayStr;
+    
+    if (uniqueDates.includes(todayStr) || uniqueDates.includes(yesterdayStr)) {
+        if (!uniqueDates.includes(todayStr)) {
+           currentDateStr = yesterdayStr;
+        }
+        
+        let currentCheckDate = new Date(currentDateStr);
+        
+        for (const dateStr of uniqueDates) {
+           if (dateStr === currentCheckDate.toISOString().split('T')[0]) {
+              streak++;
+              currentCheckDate.setDate(currentCheckDate.getDate() - 1);
+           } else if (new Date(dateStr) < currentCheckDate) {
+              break; // Date gap found
+           }
+        }
+    }
+  }
+
+  res.json({
+    solvedProblems,
+    totalSolved,
+    streak
+  });
+});
+
 const PISTON_API_URL = 'https://emkc.org/api/v2/piston/execute';
 const PISTON_LANGUAGES = {
   python: { language: 'python', version: '3.10.0' },
@@ -300,7 +419,8 @@ app.post('/api/tutor', async (req, res) => {
       requestType,
       messageHistory = [],
       failedTestCase = null,
-      userMessage = ''
+      userMessage = '',
+      hintLevel
     } = req.body;
 
     if (!process.env.GEMINI_API_KEY) {
@@ -316,7 +436,17 @@ app.post('/api/tutor', async (req, res) => {
       return res.status(404).json({ reply: 'Problem not found.' });
     }
 
-    const systemPrompt = "You are a coding tutor helping a student debug their solution. You follow \nthese strict rules:\n1. NEVER write any code or code snippets, not even one line or pseudocode\n2. NEVER reveal the solution or any part of it\n3. You MAY mention a specific line number in the student's code that is \n   problematic, but only describe what is wrong conceptually\n4. When requestType is 'why_failing': explain in plain English why the \n   approach or logic is failing for the given test case\n5. When requestType is 'what_to_do': give a conceptual nudge — describe \n   what the correct thinking should be, without saying how to code it\n6. When requestType is 'explain_concept': explain the underlying concept \n   (e.g. two pointers, recursion, hash maps) in simple terms with a \n   real-world analogy\n7. Keep responses under 150 words. Be encouraging and friendly.";
+    let systemPrompt = "You are a coding tutor helping a student debug their solution. You follow \nthese strict rules:\n1. NEVER write any code or code snippets, not even one line or pseudocode\n2. NEVER reveal the solution or any part of it\n3. You MAY mention a specific line number in the student's code that is \n   problematic, but only describe what is wrong conceptually\n4. When requestType is 'why_failing': explain in plain English why the \n   approach or logic is failing for the given test case\n5. When requestType is 'what_to_do': give a conceptual nudge — describe \n   what the correct thinking should be, without saying how to code it\n6. When requestType is 'explain_concept': explain the underlying concept \n   (e.g. two pointers, recursion, hash maps) in simple terms with a \n   real-world analogy\n7. Keep responses under 150 words. Be encouraging and friendly.";
+
+    if (requestType === 'hint') {
+      if (hintLevel === 1) {
+        systemPrompt += "\n\nHINT LEVEL 1 INSTRUCTION: Give a very vague conceptual nudge — one sentence only. Do not mention any data structures or algorithms by name.";
+      } else if (hintLevel === 2) {
+        systemPrompt += "\n\nHINT LEVEL 2 INSTRUCTION: Name the general technique or data structure they should think about, but do not explain how to use it for this problem.";
+      } else if (hintLevel === 3) {
+        systemPrompt += "\n\nHINT LEVEL 3 INSTRUCTION: Walk them through the conceptual approach step by step in plain English. Still no code. This is the most help you will ever give.";
+      }
+    }
 
     const promptContext = [
       `Request Type: ${requestType}`,
@@ -337,7 +467,7 @@ app.post('/api/tutor', async (req, res) => {
       }))
     ];
 
-    const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+    const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
     const result = await model.generateContent({ contents: messages });
     const reply = result.response.text();
 

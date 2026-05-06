@@ -27,7 +27,7 @@ interface RunCodeResult {
   passed: boolean
 }
 
-type TutorRequestType = 'why_failing' | 'what_to_do' | 'explain_concept'
+type TutorRequestType = 'why_failing' | 'explain_concept' | 'hint'
 type Language = 'python' | 'c' | 'cpp' | 'java' | 'javascript'
 type TabType = 'code' | 'output'
 
@@ -143,6 +143,7 @@ export default function ProblemPage() {
     { role: 'ai', content: 'Hi! I\'m your AI mentor. I can help you understand the problem, provide hints, or review your code. What would you like help with?' }
   ])
   const [aiLoading, setAiLoading] = useState(false)
+  const [unlockedHintLevel, setUnlockedHintLevel] = useState(1)
   const [runResults, setRunResults] = useState<RunCodeResult[]>([])
   const [runSummary, setRunSummary] = useState<{ passed: number; total: number } | null>(null)
   const [runError, setRunError] = useState<string | null>(null)
@@ -205,11 +206,11 @@ export default function ProblemPage() {
     'javascript': 63
   }
 
-  const handleTutorRequest = async (requestType: TutorRequestType) => {
-    const requestLabels: Record<TutorRequestType, string> = {
+  const handleTutorRequest = async (requestType: TutorRequestType, hintLevel?: number) => {
+    const requestLabels: Record<string, string> = {
       why_failing: 'Why is it failing?',
-      what_to_do: 'What should I do?',
-      explain_concept: 'Explain the concept'
+      explain_concept: 'Explain the concept',
+      hint: hintLevel === 1 ? 'Give me a small nudge' : hintLevel === 2 ? "I'm stuck, help more" : "I really need a push"
     }
 
     const userMessage = requestLabels[requestType]
@@ -244,6 +245,7 @@ export default function ProblemPage() {
           testResults: runResults,
           messageHistory: normalizedHistoryPayload,
           requestType,
+          hintLevel,
 
           // Kept for backend compatibility with existing endpoint contract
           problemId: problem?.id,
@@ -279,15 +281,15 @@ export default function ProblemPage() {
     setRunError(null)
 
     try {
-      const response = await fetch('http://localhost:5000/api/run-code', {
+      const response = await fetch('http://localhost:5000/submit', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
         },
         body: JSON.stringify({
-          code,
-          language,
-          problemId: problem.id
+          source_code: code,
+          language_id: languageIds[language],
+          problem_id: problem.id
         })
       })
 
@@ -297,10 +299,19 @@ export default function ProblemPage() {
       }
 
       const result = await response.json()
-      setRunResults(result.results || [])
-      setRunSummary({ passed: result.passed || 0, total: result.total || 0 })
-      if (result.error) {
-        setRunError(result.error)
+      const mappedResults = (result.testResults || []).map((r: any) => ({
+        input: r.input,
+        expected: r.expectedOutput,
+        actual: r.actualOutput,
+        passed: r.passed
+      }))
+      
+      setRunResults(mappedResults)
+      setRunSummary({ passed: result.passedTestCases || 0, total: result.totalTestCases || 0 })
+      
+      const firstError = result.testResults?.find((r: any) => !r.passed && r.error);
+      if (firstError) {
+        setRunError(`${firstError.error}${firstError.stderr ? ': ' + firstError.stderr : ''}`)
       }
     } catch (error) {
       setRunError(error instanceof Error ? error.message : 'Failed to run code')
@@ -340,6 +351,29 @@ export default function ProblemPage() {
 
       // Overall status
       const isAccepted = result.overallStatus === 'Accepted'
+
+      if (isAccepted) {
+        try {
+          const userRes = await fetch(`${API_URL}/api/me`, { credentials: 'include' })
+          if (userRes.ok) {
+            const userData = await userRes.json()
+            
+            await fetch(`${API_URL}/api/progress/solve`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                userId: userData.id,
+                problemId: problem.id,
+                language: language,
+                timeTaken: result.testResults.reduce((acc: number, t: any) => acc + (parseFloat(t.time) || 0), 0)
+              })
+            })
+          }
+        } catch (e) {
+          console.error('Failed to save progress', e)
+        }
+      }
+
       outputText += `${isAccepted ? '✅' : '❌'} ${result.overallStatus}\n\n`
       outputText += `Test Cases: ${result.passedTestCases}/${result.totalTestCases} passed\n\n`
       outputText += '─'.repeat(50) + '\n\n'
@@ -747,11 +781,31 @@ export default function ProblemPage() {
                   Why is it failing?
                 </button>
                 <button
-                  onClick={() => handleTutorRequest('what_to_do')}
-                  disabled={aiLoading || runResults.length === 0}
+                  onClick={() => {
+                    handleTutorRequest('hint', 1)
+                    if (unlockedHintLevel < 2) setUnlockedHintLevel(2)
+                  }}
+                  disabled={aiLoading || runResults.length === 0 || unlockedHintLevel < 1}
                   className="w-full text-left px-3 py-2 bg-[#161b22] text-[#c9d1d9] text-sm rounded border border-[#30363d] hover:border-[#8b5cf6] disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                 >
-                  What should I do?
+                  Give me a small nudge
+                </button>
+                <button
+                  onClick={() => {
+                    handleTutorRequest('hint', 2)
+                    if (unlockedHintLevel < 3) setUnlockedHintLevel(3)
+                  }}
+                  disabled={aiLoading || runResults.length === 0 || unlockedHintLevel < 2}
+                  className="w-full text-left px-3 py-2 bg-[#161b22] text-[#c9d1d9] text-sm rounded border border-[#30363d] hover:border-[#8b5cf6] disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                >
+                  I'm stuck, help more
+                </button>
+                <button
+                  onClick={() => handleTutorRequest('hint', 3)}
+                  disabled={aiLoading || runResults.length === 0 || unlockedHintLevel < 3}
+                  className="w-full text-left px-3 py-2 bg-[#161b22] text-[#c9d1d9] text-sm rounded border border-[#30363d] hover:border-[#8b5cf6] disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                >
+                  I really need a push
                 </button>
                 <button
                   onClick={() => handleTutorRequest('explain_concept')}
