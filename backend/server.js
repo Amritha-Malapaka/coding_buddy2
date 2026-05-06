@@ -3,6 +3,8 @@ require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const { v4: uuidv4 } = require('uuid');
+const { GoogleGenerativeAI } = require("@google/generative-ai");
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -237,6 +239,62 @@ app.post('/api/run-code', async (req, res) => {
       results: [],
       error: error.message || 'Internal server error'
     });
+  }
+});
+
+app.post('/api/tutor', async (req, res) => {
+  try {
+    const {
+      problemId,
+      code,
+      requestType,
+      messageHistory = [],
+      failedTestCase = null,
+      userMessage = ''
+    } = req.body;
+
+    if (!process.env.GEMINI_API_KEY) {
+      return res.status(500).json({ reply: 'GEMINI_API_KEY is not configured.' });
+    }
+
+    if (!problemId || !code || !requestType) {
+      return res.status(400).json({ reply: 'problemId, code, and requestType are required.' });
+    }
+
+    const problem = problems.find(p => p.id === problemId);
+    if (!problem) {
+      return res.status(404).json({ reply: 'Problem not found.' });
+    }
+
+    const systemPrompt = "You are a coding tutor helping a student debug their solution. You follow \nthese strict rules:\n1. NEVER write any code or code snippets, not even one line or pseudocode\n2. NEVER reveal the solution or any part of it\n3. You MAY mention a specific line number in the student's code that is \n   problematic, but only describe what is wrong conceptually\n4. When requestType is 'why_failing': explain in plain English why the \n   approach or logic is failing for the given test case\n5. When requestType is 'what_to_do': give a conceptual nudge — describe \n   what the correct thinking should be, without saying how to code it\n6. When requestType is 'explain_concept': explain the underlying concept \n   (e.g. two pointers, recursion, hash maps) in simple terms with a \n   real-world analogy\n7. Keep responses under 150 words. Be encouraging and friendly.";
+
+    const promptContext = [
+      `Request Type: ${requestType}`,
+      `Problem Title: ${problem.title}`,
+      `Problem Description: ${problem.description}`,
+      failedTestCase ? `Failed Test Case Input: ${failedTestCase.input || ''}` : '',
+      failedTestCase ? `Expected Output: ${failedTestCase.expected || failedTestCase.expectedOutput || ''}` : '',
+      failedTestCase ? `Actual Output: ${failedTestCase.actual || ''}` : '',
+      `Student Code:\n${code}`,
+      userMessage ? `Student Message: ${userMessage}` : ''
+    ].filter(Boolean).join('\n\n');
+
+    const messages = [
+      { role: 'user', parts: [{ text: `${systemPrompt}\n\n${promptContext}` }] },
+      ...messageHistory.map((message) => ({
+        role: message.role === 'assistant' || message.role === 'model' ? 'model' : 'user',
+        parts: [{ text: typeof message.content === 'string' ? message.content : '' }]
+      }))
+    ];
+
+    const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+    const result = await model.generateContent({ contents: messages });
+    const reply = result.response.text();
+
+    return res.json({ reply });
+  } catch (error) {
+    console.error('Tutor endpoint error:', error);
+    return res.status(500).json({ reply: 'Failed to generate tutor response.' });
   }
 });
 
