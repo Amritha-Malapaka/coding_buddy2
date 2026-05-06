@@ -227,7 +227,7 @@ export default function ProblemPage() {
       ]
 
       const normalizedHistoryPayload = historyPayload.map(msg => ({
-        role: msg.role === 'ai' ? 'assistant' : 'user',
+        role: msg.role === 'assistant' ? 'assistant' : 'user',
         content: msg.content
       }))
 
