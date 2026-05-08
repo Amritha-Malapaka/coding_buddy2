@@ -45,81 +45,18 @@ const users = demoUsers.map((user) => {
   };
 });
 
-const problems = [
-  {
-    id: '1',
-    title: 'Two Sum',
-    difficulty: 'Easy',
-    description: 'Given an array of integers nums and an integer target, return indices of the two numbers such that they add up to target.\n\nInput Format:\nFirst line: integer n (size of array)\nSecond line: n space-separated integers\nThird line: target integer',
-    examples: [
-      { input: '4\n2 7 11 15\n9', output: '0 1', explanation: 'Because nums[0] + nums[1] == 9, we return [0, 1].' }
-    ],
-    constraints: ['2 <= nums.length <= 10^4', '-10^9 <= nums[i] <= 10^9', '-10^9 <= target <= 10^9'],
-    testCases: [
-      { input: '4\n2 7 11 15\n9', expectedOutput: '0 1' },
-      { input: '3\n3 2 4\n6', expectedOutput: '1 2' },
-      { input: '2\n3 3\n6', expectedOutput: '0 1' }
-    ]
-  },
-  {
-    id: '2',
-    title: 'Sum of Two Numbers',
-    difficulty: 'Easy',
-    description: 'Given two integers a and b, return their sum.\n\nInput Format:\nFirst line: integer a\nSecond line: integer b',
-    examples: [
-      { input: '2\n3', output: '5', explanation: '2 + 3 = 5' }
-    ],
-    constraints: ['-1000 <= a, b <= 1000'],
-    testCases: [
-      { input: '2\n3', expectedOutput: '5' },
-      { input: '10\n20', expectedOutput: '30' },
-      { input: '-5\n5', expectedOutput: '0' }
-    ]
-  },
-  {
-    id: '3',
-    title: 'Binary Search',
-    difficulty: 'Medium',
-    description: 'Given an array of integers nums which is sorted in ascending order, and an integer target, write a function to search target in nums. If target exists, return its index. Otherwise, return -1.\n\nInput Format:\nFirst line: integer n (size of array)\nSecond line: n space-separated sorted integers\nThird line: target integer',
-    examples: [
-      { input: '6\n-1 0 3 5 9 12\n9', output: '4', explanation: '9 exists in nums and its index is 4' }
-    ],
-    constraints: ['1 <= nums.length <= 10^4', '-10^4 < nums[i], target < 10^4', 'All the integers in nums are unique.'],
-    testCases: [
-      { input: '6\n-1 0 3 5 9 12\n9', expectedOutput: '4' },
-      { input: '6\n-1 0 3 5 9 12\n2', expectedOutput: '-1' },
-      { input: '1\n5\n5', expectedOutput: '0' }
-    ]
-  },
-  {
-    id: '4',
-    title: 'Hello World',
-    difficulty: 'Easy',
-    description: 'Write a program that prints "Hello, World!"\n\nInput Format:\nNo input required.',
-    examples: [
-      { input: '(no input)', output: 'Hello, World!', explanation: 'Simply print the string' }
-    ],
-    constraints: ['No constraints'],
-    testCases: [
-      { input: '', expectedOutput: 'Hello, World!' }
-    ]
-  },
-  {
-    id: '5',
-    title: 'Print Input',
-    difficulty: 'Easy',
-    description: 'Read a line of input and print it back.\n\nInput Format:\nFirst line: a string to echo',
-    examples: [
-      { input: 'Hello', output: 'Hello', explanation: 'Echo the input' }
-    ],
-    constraints: ['Input is a single line string'],
-    testCases: [
-      { input: 'Hello', expectedOutput: 'Hello' },
-      { input: '42', expectedOutput: '42' },
-      { input: 'Coding is fun', expectedOutput: 'Coding is fun' }
-    ]
+const PROBLEMS_FILE = path.join(DATA_DIR, 'problems.json');
+let problems = [];
+try {
+  if (fs.existsSync(PROBLEMS_FILE)) {
+    const problemsContent = fs.readFileSync(PROBLEMS_FILE, 'utf8');
+    problems = JSON.parse(problemsContent);
+  } else {
+    console.warn('problems.json not found in data directory.');
   }
-];
+} catch (error) {
+  console.error('Error loading problems.json:', error);
+}
 
 const JWT_SECRET = process.env.JWT_SECRET || '';
 

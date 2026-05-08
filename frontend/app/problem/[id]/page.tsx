@@ -35,55 +35,38 @@ const API_URL = 'http://localhost:5000'
 
 const defaultCode: Record<Language, string> = {
   python: `# Read input from stdin
-data = input().strip().split()
-n = int(data[0])
-nums = list(map(int, data[1:n+1]))
-target = int(data[n+1])
+import sys
 
-# Write your solution here
-def twoSum(nums, target):
-    # Your code
-    pass
-
-result = twoSum(nums, target)
-print(result)`,
+def main():
+    # Read all input from standard input
+    input_data = sys.stdin.read().split()
+    if not input_data:
+        return
+        
+    # Write your solution here
+    
+if __name__ == '__main__':
+    main()`,
   c: `#include <stdio.h>
+#include <stdlib.h>
 
 int main() {
-    int n;
-    scanf("%d", &n);
-    
-    int nums[10000];
-    for (int i = 0; i < n; i++) {
-        scanf("%d", &nums[i]);
-    }
-    
-    int target;
-    scanf("%d", &target);
-    
     // Write your solution here
-    printf("0 1\\n");
     
     return 0;
 }`,
   cpp: `#include <iostream>
 #include <vector>
+#include <string>
+
 using namespace std;
 
 int main() {
-    int n;
-    cin >> n;
-    
-    vector<int> nums(n);
-    for (int i = 0; i < n; i++) {
-        cin >> nums[i];
-    }
-    
-    int target;
-    cin >> target;
+    // Fast I/O
+    ios_base::sync_with_stdio(false);
+    cin.tie(NULL);
     
     // Write your solution here
-    cout << "0 1" << endl;
     
     return 0;
 }`,
@@ -93,15 +76,9 @@ public class Solution {
     public static void main(String[] args) {
         Scanner sc = new Scanner(System.in);
         
-        int n = sc.nextInt();
-        int[] nums = new int[n];
-        for (int i = 0; i < n; i++) {
-            nums[i] = sc.nextInt();
-        }
-        int target = sc.nextInt();
-        
         // Write your solution here
-        System.out.println("0 1");
+        
+        sc.close();
     }
 }`,
   javascript: `const readline = require('readline');
@@ -117,12 +94,9 @@ rl.on('line', (line) => {
 });
 
 rl.on('close', () => {
-    const n = parseInt(input[0]);
-    const nums = input.slice(1, n + 1).map(Number);
-    const target = parseInt(input[n + 1]);
-    
     // Write your solution here
-    console.log("0 1");
+    // The 'input' array contains all space-separated tokens from stdin
+    
 });`
 }
 
@@ -143,7 +117,7 @@ export default function ProblemPage() {
     { role: 'ai', content: 'Hi! I\'m your AI mentor. I can help you understand the problem, provide hints, or review your code. What would you like help with?' }
   ])
   const [aiLoading, setAiLoading] = useState(false)
-  const [unlockedHintLevel, setUnlockedHintLevel] = useState(1)
+  const [unlockedHintLevel, setUnlockedHintLevel] = useState(2)
   const [runResults, setRunResults] = useState<RunCodeResult[]>([])
   const [runSummary, setRunSummary] = useState<{ passed: number; total: number } | null>(null)
   const [runError, setRunError] = useState<string | null>(null)
@@ -779,16 +753,6 @@ export default function ProblemPage() {
                   className="w-full text-left px-3 py-2 bg-[#161b22] text-[#c9d1d9] text-sm rounded border border-[#30363d] hover:border-[#8b5cf6] disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                 >
                   Why is it failing?
-                </button>
-                <button
-                  onClick={() => {
-                    handleTutorRequest('hint', 1)
-                    if (unlockedHintLevel < 2) setUnlockedHintLevel(2)
-                  }}
-                  disabled={aiLoading || runResults.length === 0 || unlockedHintLevel < 1}
-                  className="w-full text-left px-3 py-2 bg-[#161b22] text-[#c9d1d9] text-sm rounded border border-[#30363d] hover:border-[#8b5cf6] disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                >
-                  Give me a small nudge
                 </button>
                 <button
                   onClick={() => {
