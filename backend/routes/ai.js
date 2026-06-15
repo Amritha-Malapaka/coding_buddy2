@@ -1,9 +1,11 @@
 const express = require('express');
-const { GoogleGenerativeAI } = require('@google/generative-ai');
+const Groq = require('groq-sdk');
 const { problems } = require('../data/store');
 
 const router = express.Router();
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
+
+const MODEL = 'llama-3.3-70b-versatile';
 
 router.post('/tutor', async (req, res) => {
   try {
@@ -18,8 +20,8 @@ router.post('/tutor', async (req, res) => {
       tutorName = 'Sage'
     } = req.body;
 
-    if (!process.env.GEMINI_API_KEY) {
-      return res.status(500).json({ reply: 'GEMINI_API_KEY is not configured.' });
+    if (!process.env.GROQ_API_KEY) {
+      return res.status(500).json({ reply: 'GROQ_API_KEY is not configured.' });
     }
 
     if (!problemId || !code || !requestType) {
@@ -86,13 +88,15 @@ hint level 3 → 2-3 bullet steps, conceptual only`;
       .filter(Boolean)
       .join('\n\n');
 
-    const model = genAI.getGenerativeModel({
-      model: 'gemini-2.5-flash',
-      systemInstruction: systemPrompt
+    const completion = await groq.chat.completions.create({
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: promptContext },
+      ],
+      model: MODEL,
     });
-    const result = await model.generateContent(promptContext);
-    const reply = result.response.text();
 
+    const reply = completion.choices[0].message.content;
     res.json({ reply });
   } catch (error) {
     console.error('Tutor endpoint error:', error?.message || error);
@@ -104,8 +108,8 @@ router.post('/visualize', async (req, res) => {
   try {
     const { problemTitle, problemDescription, userCode, failedTestCase, concept } = req.body;
 
-    if (!process.env.GEMINI_API_KEY) {
-      return res.status(500).json({ error: 'GEMINI_API_KEY is not configured.' });
+    if (!process.env.GROQ_API_KEY) {
+      return res.status(500).json({ error: 'GROQ_API_KEY is not configured.' });
     }
 
     const failedTestCaseString = failedTestCase
@@ -189,11 +193,13 @@ Target Algorithm Concept: ${concept || 'array'}
 
 Keep all step notes under 8 words each.`;
 
-    const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
-    const result = await model.generateContent(prompt);
-    let text = result.response.text().trim();
+    const completion = await groq.chat.completions.create({
+      messages: [{ role: 'user', content: prompt }],
+      model: MODEL,
+    });
 
-    // Clean up potential markdown code blocks
+    let text = completion.choices[0].message.content.trim();
+
     if (text.startsWith("```json")) {
       text = text.substring(7);
     } else if (text.startsWith("```")) {
@@ -354,16 +360,15 @@ router.post('/ai/adversarial', async (req, res) => {
       return res.status(400).json({ error: 'code, problemId, and language_id are required' });
     }
 
-    if (!process.env.GEMINI_API_KEY) {
-      return res.status(500).json({ error: 'GEMINI_API_KEY is not configured.' });
+    if (!process.env.GROQ_API_KEY) {
+      return res.status(500).json({ error: 'GROQ_API_KEY is not configured.' });
     }
 
-    // Step 1: AI generates attack inputs
     const attackPrompt = `You are a competitive programmer trying to BREAK this solution. Read the code carefully and find its weaknesses.
 
 Generate 5 adversarial test inputs that might cause this specific code to fail. Target these vulnerability types:
 1. Integer overflow or very large numbers
-2. Empty or null-like input  
+2. Empty or null-like input
 3. All same values (e.g. [5,5,5,5])
 4. Already sorted or reverse sorted
 5. Single element
@@ -387,13 +392,15 @@ Language: ${language}
 Student Code:
 ${code}`;
 
-    const model = genAI.getGenerativeModel({
-      model: 'gemini-2.5-flash',
-      systemInstruction: attackPrompt
+    const attackCompletion = await groq.chat.completions.create({
+      messages: [
+        { role: 'system', content: attackPrompt },
+        { role: 'user', content: promptContext },
+      ],
+      model: MODEL,
     });
-    const aiResult = await model.generateContent(promptContext);
 
-    let text = aiResult.response.text().trim();
+    let text = attackCompletion.choices[0].message.content.trim();
     if (text.startsWith("```json")) {
       text = text.substring(7);
     } else if (text.startsWith("```")) {
@@ -417,21 +424,16 @@ ${code}`;
       return res.status(500).json({ error: 'No attacks generated.' });
     }
 
-    // Ensure we only have 5 attacks
     parsedAttacks = parsedAttacks.slice(0, 5);
 
-    // Step 2 & 3: Run each attack through Judge0/Piston and Compare results to expected outputs from test cases
     const problem = problems.find(p => p.id === problemId);
-    
-    // We need expected outputs for the attack inputs.
-    // If the attack input matches one of problem.testCases, we use it.
-    // Otherwise, we ask Gemini to solve it.
+
     const inputsToSolve = [];
     const expectedOutputs = new Array(parsedAttacks.length).fill(null);
 
     parsedAttacks.forEach((attack, idx) => {
       if (problem && problem.testCases) {
-        const match = problem.testCases.find(tc => 
+        const match = problem.testCases.find(tc =>
           tc.input.trim() === attack.input.trim() ||
           tc.input.trim().replace(/\r\n/g, '\n') === attack.input.trim().replace(/\r\n/g, '\n')
         );
@@ -463,10 +465,12 @@ Example format:
   ...
 ]`;
 
-      const solverModel = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
-      const solverResult = await solverModel.generateContent(solverPrompt);
+      const solverCompletion = await groq.chat.completions.create({
+        messages: [{ role: 'user', content: solverPrompt }],
+        model: MODEL,
+      });
 
-      let solverText = solverResult.response.text().trim();
+      let solverText = solverCompletion.choices[0].message.content.trim();
       if (solverText.startsWith("```json")) {
         solverText = solverText.substring(7);
       } else if (solverText.startsWith("```")) {
@@ -490,7 +494,6 @@ Example format:
       }
     }
 
-    // Now run the user's code against the attacks
     const submissions = parsedAttacks.map(attack => ({
       source_code: code,
       language_id: language_id,
@@ -503,8 +506,8 @@ Example format:
     const attacksResult = parsedAttacks.map((attack, idx) => {
       const run = runResults[idx];
       const expected = expectedOutputs[idx] || '';
-      
-      const survived = run.status?.id === 3 && 
+
+      const survived = run.status?.id === 3 &&
                        normalizeOutput(run.stdout) === normalizeOutput(expected);
 
       return {
@@ -533,9 +536,11 @@ ${code}
 Give a one-sentence conceptual tip to the student on how to improve/harden their code against these specific failures. Do not write any code. Keep it under 30 words.`;
 
       try {
-        const tipModel = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
-        const tipResult = await tipModel.generateContent(tipPrompt);
-        tip = tipResult.response.text().trim();
+        const tipCompletion = await groq.chat.completions.create({
+          messages: [{ role: 'user', content: tipPrompt }],
+          model: MODEL,
+        });
+        tip = tipCompletion.choices[0].message.content.trim();
       } catch (tipErr) {
         console.error('Failed to generate tip:', tipErr);
       }
