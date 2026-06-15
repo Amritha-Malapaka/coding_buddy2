@@ -28,22 +28,45 @@ function runProcess(cmd, args, { stdin = '', cwd } = {}) {
     const proc = spawn(cmd, args, { cwd, stdio: ['pipe', 'pipe', 'pipe'] });
     let stdout = '';
     let stderr = '';
+    let settled = false;
+
+    const finish = (payload) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve(payload);
+    };
 
     proc.stdout.on('data', d => { stdout += d; });
     proc.stderr.on('data', d => { stderr += d; });
 
     const timer = setTimeout(() => {
       proc.kill('SIGKILL');
-      resolve({ timedOut: true, stdout, stderr, code: null });
+      finish({ timedOut: true, stdout, stderr, code: null });
     }, TIMEOUT_MS);
 
-    proc.on('close', (code) => {
-      clearTimeout(timer);
-      resolve({ timedOut: false, stdout, stderr, code });
+    // If the process exits before reading stdin, writing to its stdin emits
+    // EPIPE. Without this listener the 'error' event is unhandled and crashes
+    // the whole server. Swallow stdin pipe errors — the run result is unaffected.
+    proc.stdin.on('error', () => {});
+
+    // Spawn failures (e.g. compiler/interpreter missing) emit 'error' on the
+    // child; resolve gracefully instead of throwing.
+    proc.on('error', (err) => {
+      finish({ timedOut: false, stdout, stderr: stderr || String(err.message || err), code: 1 });
     });
 
-    if (stdin) proc.stdin.write(stdin);
-    proc.stdin.end();
+    proc.on('close', (code) => {
+      finish({ timedOut: false, stdout, stderr, code });
+    });
+
+    // Guard the write/end too — they can throw synchronously on a dead pipe.
+    try {
+      if (stdin) proc.stdin.write(stdin);
+      proc.stdin.end();
+    } catch (e) {
+      // EPIPE / closed stream — ignore; 'close' or 'error' will settle the run.
+    }
   });
 }
 
